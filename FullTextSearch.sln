@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FullTextSearch.Core", "src\FullTextSearch.Core\FullTextSearch.Core.csproj", "{842DE630-C136-4724-927C-8CF0C0EE30BA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FullTextSearch.Api", "src\FullTextSearch.Api\FullTextSearch.Api.csproj", "{B60283B9-2A9B-46ED-8B80-A2D7EF43B89F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FullTextSearch.Tests", "tests\FullTextSearch.Tests\FullTextSearch.Tests.csproj", "{EAC1A22F-BDE4-45FC-B622-D243DB30A3C1}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{842DE630-C136-4724-927C-8CF0C0EE30BA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{842DE630-C136-4724-927C-8CF0C0EE30BA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{842DE630-C136-4724-927C-8CF0C0EE30BA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{842DE630-C136-4724-927C-8CF0C0EE30BA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B60283B9-2A9B-46ED-8B80-A2D7EF43B89F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B60283B9-2A9B-46ED-8B80-A2D7EF43B89F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B60283B9-2A9B-46ED-8B80-A2D7EF43B89F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B60283B9-2A9B-46ED-8B80-A2D7EF43B89F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EAC1A22F-BDE4-45FC-B622-D243DB30A3C1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EAC1A22F-BDE4-45FC-B622-D243DB30A3C1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EAC1A22F-BDE4-45FC-B622-D243DB30A3C1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EAC1A22F-BDE4-45FC-B622-D243DB30A3C1}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
