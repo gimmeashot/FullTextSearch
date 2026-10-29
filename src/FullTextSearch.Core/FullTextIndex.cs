@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace FullTextSearch.Core;
 
@@ -7,7 +9,7 @@ public sealed class FullTextIndex
 {
     private readonly ReaderWriterLockSlim _lock = new();
     private readonly Dictionary<string, SearchDocument> _documents = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Dictionary<string, Dictionary<string, int>>> _postings = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<string, Dictionary<string, List<int>>>> _postings = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<string, int>> _fieldLengths = new(StringComparer.Ordinal);
 
     public IndexStatistics Statistics
@@ -24,9 +26,7 @@ public sealed class FullTextIndex
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(document.Id);
         ArgumentNullException.ThrowIfNull(document.Fields);
-
-        var copy = new SearchDocument(
-            document.Id,
+        var copy = new SearchDocument(document.Id,
             new Dictionary<string, string>(document.Fields, StringComparer.OrdinalIgnoreCase));
 
         _lock.EnterWriteLock();
@@ -40,13 +40,16 @@ public sealed class FullTextIndex
             {
                 var tokens = TextAnalyzer.Analyze(value);
                 _fieldLengths[document.Id][field] = tokens.Count;
-                foreach (var group in tokens.GroupBy(x => x, StringComparer.Ordinal))
+                for (var position = 0; position < tokens.Count; position++)
                 {
-                    if (!_postings.TryGetValue(group.Key, out var documents))
-                        _postings[group.Key] = documents = new(StringComparer.Ordinal);
+                    var term = tokens[position];
+                    if (!_postings.TryGetValue(term, out var documents))
+                        _postings[term] = documents = new(StringComparer.Ordinal);
                     if (!documents.TryGetValue(document.Id, out var fields))
                         documents[document.Id] = fields = new(StringComparer.OrdinalIgnoreCase);
-                    fields[field] = group.Count();
+                    if (!fields.TryGetValue(field, out var positions))
+                        fields[field] = positions = [];
+                    positions.Add(position);
                 }
             }
         }
@@ -74,40 +77,35 @@ public sealed class FullTextIndex
             var allowedFields = options.Fields is null
                 ? null
                 : new HashSet<string>(options.Fields, StringComparer.OrdinalIgnoreCase);
-            var matches = new Dictionary<string, (double Score, int MatchedTerms)>(StringComparer.Ordinal);
+            var positive = parsed.Clauses.Where(x => !x.Negated).Select(x => MatchClause(x, allowedFields)).ToArray();
+            var scores = new Dictionary<string, double>(positive[0], StringComparer.Ordinal);
 
-            foreach (var term in parsed.Terms)
+            foreach (var clauseMatches in positive.Skip(1))
             {
-                if (!_postings.TryGetValue(term, out var posting))
-                    continue;
-
-                var documentFrequency = posting.Count;
-                var idf = Math.Log(1 + (_documents.Count - documentFrequency + 0.5) / (documentFrequency + 0.5));
-                foreach (var (documentId, fields) in posting)
+                if (parsed.Operator == QueryOperator.And)
                 {
-                    var score = fields
-                        .Where(x => allowedFields is null || allowedFields.Contains(x.Key))
-                        .Sum(x => CalculateBm25(idf, x.Value, _fieldLengths[documentId][x.Key], AverageFieldLength(x.Key)));
-                    if (score <= 0) continue;
-                    var previous = matches.GetValueOrDefault(documentId);
-                    matches[documentId] = (previous.Score + score, previous.MatchedTerms + 1);
+                    foreach (var documentId in scores.Keys.ToArray())
+                    {
+                        if (clauseMatches.TryGetValue(documentId, out var score)) scores[documentId] += score;
+                        else scores.Remove(documentId);
+                    }
+                }
+                else
+                {
+                    foreach (var (documentId, score) in clauseMatches)
+                        scores[documentId] = scores.GetValueOrDefault(documentId) + score;
                 }
             }
 
-            IEnumerable<KeyValuePair<string, (double Score, int MatchedTerms)>> filtered = matches;
-            if (parsed.Operator == QueryOperator.And)
-                filtered = filtered.Where(x => x.Value.MatchedTerms == parsed.Terms.Count);
+            foreach (var negative in parsed.Clauses.Where(x => x.Negated))
+                foreach (var documentId in MatchClause(negative, allowedFields).Keys)
+                    scores.Remove(documentId);
 
-            var ranked = filtered
-                .OrderByDescending(x => x.Value.Score)
-                .ThenBy(x => x.Key, StringComparer.Ordinal)
+            var ranked = scores.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal).ToArray();
+            var hits = ranked.Skip(options.Skip).Take(options.Take)
+                .Select(x => new SearchHit(x.Key, x.Value, _documents[x.Key].Fields,
+                    BuildHighlights(_documents[x.Key], parsed.Clauses.Where(c => !c.Negated), allowedFields)))
                 .ToArray();
-            var hits = ranked
-                .Skip(options.Skip)
-                .Take(options.Take)
-                .Select(x => new SearchHit(x.Key, x.Value.Score, _documents[x.Key].Fields))
-                .ToArray();
-
             timer.Stop();
             return new SearchResponse(ranked.Length, hits, timer.ElapsedMilliseconds);
         }
@@ -142,6 +140,77 @@ public sealed class FullTextIndex
         return index;
     }
 
+    private Dictionary<string, double> MatchClause(QueryClause clause, HashSet<string>? allowedFields) =>
+        clause.Kind switch
+        {
+            QueryClauseKind.Term => MatchTerms([clause.Terms[0]], allowedFields),
+            QueryClauseKind.Prefix => MatchTerms(_postings.Keys.Where(x => x.StartsWith(clause.Terms[0], StringComparison.Ordinal)), allowedFields),
+            QueryClauseKind.Phrase => MatchPhrase(clause.Terms, allowedFields),
+            _ => []
+        };
+
+    private Dictionary<string, double> MatchTerms(IEnumerable<string> terms, HashSet<string>? allowedFields)
+    {
+        var matches = new Dictionary<string, double>(StringComparer.Ordinal);
+        foreach (var term in terms)
+        {
+            if (!_postings.TryGetValue(term, out var posting)) continue;
+            var idf = CalculateIdf(posting.Count);
+            foreach (var (documentId, fields) in posting)
+            {
+                var score = fields.Where(x => allowedFields is null || allowedFields.Contains(x.Key))
+                    .Sum(x => CalculateBm25(idf, x.Value.Count, _fieldLengths[documentId][x.Key], AverageFieldLength(x.Key)));
+                if (score > 0) matches[documentId] = matches.GetValueOrDefault(documentId) + score;
+            }
+        }
+        return matches;
+    }
+
+    private Dictionary<string, double> MatchPhrase(IReadOnlyList<string> terms, HashSet<string>? allowedFields)
+    {
+        var matches = new Dictionary<string, double>(StringComparer.Ordinal);
+        if (terms.Any(x => !_postings.ContainsKey(x))) return matches;
+
+        foreach (var documentId in _postings[terms[0]].Keys)
+        {
+            foreach (var (field, starts) in _postings[terms[0]][documentId])
+            {
+                if (allowedFields is not null && !allowedFields.Contains(field)) continue;
+                if (terms.Skip(1).Any(term => !_postings[term].TryGetValue(documentId, out var fields) || !fields.ContainsKey(field))) continue;
+                var found = starts.Any(start => terms.Skip(1).Select((term, offset) =>
+                    _postings[term][documentId][field].Contains(start + offset + 1)).All(x => x));
+                if (!found) continue;
+
+                var score = terms.Sum(term => CalculateBm25(CalculateIdf(_postings[term].Count),
+                    _postings[term][documentId][field].Count, _fieldLengths[documentId][field], AverageFieldLength(field)));
+                matches[documentId] = matches.GetValueOrDefault(documentId) + score * 1.5;
+            }
+        }
+        return matches;
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildHighlights(
+        SearchDocument document, IEnumerable<QueryClause> clauses, HashSet<string>? allowedFields)
+    {
+        var patterns = clauses.Select(clause => clause.Kind switch
+        {
+            QueryClauseKind.Phrase => string.Join(@"\s+", clause.Terms.Select(Regex.Escape)),
+            QueryClauseKind.Prefix => Regex.Escape(clause.Terms[0]) + @"[\p{L}\p{N}]*",
+            _ => Regex.Escape(clause.Terms[0])
+        }).ToArray();
+        var combinedPattern = string.Join("|", patterns.Select(x => $"(?:{x})"));
+        var highlights = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (field, value) in document.Fields)
+        {
+            if (allowedFields is not null && !allowedFields.Contains(field)) continue;
+            var encoded = WebUtility.HtmlEncode(value);
+            var highlighted = Regex.Replace(encoded, combinedPattern, "<em>$0</em>",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (highlighted != encoded) highlights[field] = highlighted;
+        }
+        return highlights;
+    }
+
     private bool RemoveInternal(string documentId)
     {
         if (!_documents.Remove(documentId)) return false;
@@ -159,6 +228,9 @@ public sealed class FullTextIndex
         var lengths = _fieldLengths.Values.Where(x => x.ContainsKey(field)).Select(x => x[field]).ToArray();
         return lengths.Length == 0 ? 1 : lengths.Average();
     }
+
+    private double CalculateIdf(int documentFrequency) =>
+        Math.Log(1 + (_documents.Count - documentFrequency + 0.5) / (documentFrequency + 0.5));
 
     private static double CalculateBm25(double idf, int frequency, int length, double averageLength)
     {

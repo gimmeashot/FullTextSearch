@@ -5,7 +5,8 @@ public sealed record SearchDocument(string Id, IReadOnlyDictionary<string, strin
 public sealed record SearchHit(
     string Id,
     double Score,
-    IReadOnlyDictionary<string, string> Fields);
+    IReadOnlyDictionary<string, string> Fields,
+    IReadOnlyDictionary<string, string> Highlights);
 
 public sealed record SearchResponse(
     int Total,

@@ -10,6 +10,7 @@ var app = builder.Build();
 app.MapGet("/", () => Results.Ok(new
 {
     name = "FullTextSearch",
+    version = "0.2.0",
     endpoints = new[] { "PUT /documents/{id}", "DELETE /documents/{id}", "GET /search?q=...", "GET /stats", "POST /commit" }
 }));
 

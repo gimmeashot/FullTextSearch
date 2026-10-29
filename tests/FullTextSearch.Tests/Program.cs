@@ -17,6 +17,28 @@ var tests = new List<(string Name, Func<Task> Run)>
         var index = SampleIndex();
         Assert(index.Search("поиск OR рецепты").Total == 2, "OR result is incorrect.");
     })),
+    ("Phrase requires adjacent terms in order", () => Run(() =>
+    {
+        var index = SampleIndex();
+        Assert(index.Search("\"полнотекстовый поиск\"").Hits.Single().Id == "1", "Phrase was not found.");
+        Assert(index.Search("\"поиск полнотекстовый\"").Total == 0, "Reversed phrase must not match.");
+    })),
+    ("Prefix expands matching terms", () => Run(() =>
+    {
+        var index = SampleIndex();
+        Assert(index.Search("разраб*").Hits.Single().Id == "1", "Prefix result is incorrect.");
+    })),
+    ("NOT excludes matching documents", () => Run(() =>
+    {
+        var index = SampleIndex();
+        Assert(index.Search("поиск OR рецепты NOT выпечка").Hits.Single().Id == "1", "NOT result is incorrect.");
+    })),
+    ("Matches are highlighted safely", () => Run(() =>
+    {
+        var index = SampleIndex();
+        var hit = index.Search("поиск").Hits.Single();
+        Assert(hit.Highlights["title"].Contains("<em>поиск</em>", StringComparison.OrdinalIgnoreCase), "Highlight is missing.");
+    })),
     ("Update removes old terms", () => Run(() =>
     {
         var index = SampleIndex();
