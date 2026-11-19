@@ -5,11 +5,17 @@ namespace FullTextSearch.Core;
 internal enum QueryOperator { Or, And }
 internal enum QueryClauseKind { Term, Prefix, Phrase }
 
-internal sealed record QueryClause(QueryClauseKind Kind, IReadOnlyList<string> Terms, bool Negated);
+internal sealed record QueryClause(
+    QueryClauseKind Kind,
+    IReadOnlyList<string> Terms,
+    bool Negated,
+    string? Field);
 
 internal sealed record ParsedQuery(QueryOperator Operator, IReadOnlyList<QueryClause> Clauses)
 {
-    private static readonly Regex Parts = new("\"[^\"]+\"|\\S+", RegexOptions.Compiled);
+    private static readonly Regex Parts = new(
+        "(?:(?<field>[\\p{L}\\p{N}_-]+):)?(?<value>\"[^\"]+\"|[^\\s]+)",
+        RegexOptions.Compiled);
 
     public static ParsedQuery Parse(string query)
     {
@@ -22,14 +28,15 @@ internal sealed record ParsedQuery(QueryOperator Operator, IReadOnlyList<QueryCl
 
         foreach (Match match in Parts.Matches(query))
         {
-            var part = match.Value;
-            if (part.Equals("AND", StringComparison.OrdinalIgnoreCase))
+            var part = match.Groups["value"].Value;
+            var field = match.Groups["field"].Success ? match.Groups["field"].Value : null;
+            if (field is null && part.Equals("AND", StringComparison.OrdinalIgnoreCase))
             {
                 operation = QueryOperator.And;
                 continue;
             }
-            if (part.Equals("OR", StringComparison.OrdinalIgnoreCase)) continue;
-            if (part.Equals("NOT", StringComparison.OrdinalIgnoreCase))
+            if (field is null && part.Equals("OR", StringComparison.OrdinalIgnoreCase)) continue;
+            if (field is null && part.Equals("NOT", StringComparison.OrdinalIgnoreCase))
             {
                 negateNext = true;
                 continue;
@@ -41,12 +48,23 @@ internal sealed record ParsedQuery(QueryOperator Operator, IReadOnlyList<QueryCl
             var terms = TextAnalyzer.Analyze(source);
             if (terms.Count == 0) continue;
 
-            clauses.Add(new QueryClause(
-                isPhrase ? QueryClauseKind.Phrase : isPrefix ? QueryClauseKind.Prefix : QueryClauseKind.Term,
-                isPrefix ? [terms[0]] : terms,
-                negateNext));
+            if (!isPhrase && !isPrefix && terms.Count > 1)
+            {
+                clauses.AddRange(terms.Select(term => new QueryClause(QueryClauseKind.Term, [term], negateNext, field)));
+            }
+            else
+            {
+                clauses.Add(new QueryClause(
+                    isPhrase ? QueryClauseKind.Phrase : isPrefix ? QueryClauseKind.Prefix : QueryClauseKind.Term,
+                    isPrefix ? [terms[0]] : terms,
+                    negateNext,
+                    field));
+            }
             negateNext = false;
         }
+
+        if (negateNext)
+            throw new ArgumentException("NOT must be followed by a search clause.", nameof(query));
 
         if (clauses.All(x => x.Negated))
             throw new ArgumentException("Search query must contain at least one positive clause.", nameof(query));

@@ -39,6 +39,24 @@ var tests = new List<(string Name, Func<Task> Run)>
         var hit = index.Search("поиск").Hits.Single();
         Assert(hit.Highlights["title"].Contains("<em>поиск</em>", StringComparison.OrdinalIgnoreCase), "Highlight is missing.");
     })),
+    ("Field query searches only the selected field", () => Run(() =>
+    {
+        var index = SampleIndex();
+        Assert(index.Search("title:разработка").Total == 0, "Field restriction was ignored.");
+        Assert(index.Search("body:разработка").Hits.Single().Id == "1", "Field query did not match.");
+    })),
+    ("Field query supports phrases and prefixes", () => Run(() =>
+    {
+        var index = SampleIndex();
+        Assert(index.Search("title:\"полнотекстовый поиск\"").Hits.Single().Id == "1", "Scoped phrase did not match.");
+        Assert(index.Search("body:разраб*").Hits.Single().Id == "1", "Scoped prefix did not match.");
+    })),
+    ("Field query respects allowed field options", () => Run(() =>
+    {
+        var index = SampleIndex();
+        var options = new SearchOptions { Fields = ["title"] };
+        Assert(index.Search("body:разработка", options).Total == 0, "Disallowed field was searched.");
+    })),
     ("Update removes old terms", () => Run(() =>
     {
         var index = SampleIndex();

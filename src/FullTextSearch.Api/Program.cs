@@ -10,14 +10,24 @@ var app = builder.Build();
 app.MapGet("/", () => Results.Ok(new
 {
     name = "FullTextSearch",
-    version = "0.2.0",
-    endpoints = new[] { "PUT /documents/{id}", "DELETE /documents/{id}", "GET /search?q=...", "GET /stats", "POST /commit" }
+    version = "0.3.0",
+    endpoints = new[] { "PUT /documents/{id}", "POST /documents/bulk", "DELETE /documents/{id}", "GET /search?q=...", "GET /stats", "POST /commit" }
 }));
 
 app.MapPut("/documents/{id}", (string id, DocumentRequest request, FullTextIndex searchIndex) =>
 {
     searchIndex.AddOrUpdate(new SearchDocument(id, request.Fields));
     return Results.NoContent();
+});
+
+app.MapPost("/documents/bulk", (BulkDocumentRequest request, FullTextIndex searchIndex) =>
+{
+    if (request.Documents.Count is < 1 or > 1000)
+        return Results.BadRequest(new { error = "A bulk request must contain between 1 and 1000 documents." });
+
+    foreach (var document in request.Documents)
+        searchIndex.AddOrUpdate(new SearchDocument(document.Id, document.Fields));
+    return Results.Ok(new { indexed = request.Documents.Count });
 });
 
 app.MapDelete("/documents/{id}", (string id, FullTextIndex searchIndex) =>
@@ -50,5 +60,7 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
 app.Run();
 
 public sealed record DocumentRequest(Dictionary<string, string> Fields);
+public sealed record BulkDocumentRequest(IReadOnlyList<BulkDocumentItem> Documents);
+public sealed record BulkDocumentItem(string Id, Dictionary<string, string> Fields);
 
 public partial class Program;

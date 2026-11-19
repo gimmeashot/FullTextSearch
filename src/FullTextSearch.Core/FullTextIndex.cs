@@ -140,14 +140,27 @@ public sealed class FullTextIndex
         return index;
     }
 
-    private Dictionary<string, double> MatchClause(QueryClause clause, HashSet<string>? allowedFields) =>
-        clause.Kind switch
+    private Dictionary<string, double> MatchClause(QueryClause clause, HashSet<string>? allowedFields)
+    {
+        var effectiveFields = ResolveFields(clause.Field, allowedFields);
+        if (clause.Field is not null && effectiveFields is { Count: 0 }) return [];
+
+        return clause.Kind switch
         {
-            QueryClauseKind.Term => MatchTerms([clause.Terms[0]], allowedFields),
-            QueryClauseKind.Prefix => MatchTerms(_postings.Keys.Where(x => x.StartsWith(clause.Terms[0], StringComparison.Ordinal)), allowedFields),
-            QueryClauseKind.Phrase => MatchPhrase(clause.Terms, allowedFields),
+            QueryClauseKind.Term => MatchTerms([clause.Terms[0]], effectiveFields),
+            QueryClauseKind.Prefix => MatchTerms(_postings.Keys.Where(x => x.StartsWith(clause.Terms[0], StringComparison.Ordinal)), effectiveFields),
+            QueryClauseKind.Phrase => MatchPhrase(clause.Terms, effectiveFields),
             _ => []
         };
+    }
+
+    private static HashSet<string>? ResolveFields(string? queryField, HashSet<string>? allowedFields)
+    {
+        if (queryField is null) return allowedFields;
+        if (allowedFields is not null && !allowedFields.Contains(queryField))
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return new HashSet<string>([queryField], StringComparer.OrdinalIgnoreCase);
+    }
 
     private Dictionary<string, double> MatchTerms(IEnumerable<string> terms, HashSet<string>? allowedFields)
     {
@@ -192,17 +205,20 @@ public sealed class FullTextIndex
     private static IReadOnlyDictionary<string, string> BuildHighlights(
         SearchDocument document, IEnumerable<QueryClause> clauses, HashSet<string>? allowedFields)
     {
-        var patterns = clauses.Select(clause => clause.Kind switch
-        {
-            QueryClauseKind.Phrase => string.Join(@"\s+", clause.Terms.Select(Regex.Escape)),
-            QueryClauseKind.Prefix => Regex.Escape(clause.Terms[0]) + @"[\p{L}\p{N}]*",
-            _ => Regex.Escape(clause.Terms[0])
-        }).ToArray();
-        var combinedPattern = string.Join("|", patterns.Select(x => $"(?:{x})"));
         var highlights = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (field, value) in document.Fields)
         {
             if (allowedFields is not null && !allowedFields.Contains(field)) continue;
+            var patterns = clauses
+                .Where(clause => clause.Field is null || clause.Field.Equals(field, StringComparison.OrdinalIgnoreCase))
+                .Select(clause => clause.Kind switch
+                {
+                    QueryClauseKind.Phrase => string.Join(@"\s+", clause.Terms.Select(Regex.Escape)),
+                    QueryClauseKind.Prefix => Regex.Escape(clause.Terms[0]) + @"[\p{L}\p{N}]*",
+                    _ => Regex.Escape(clause.Terms[0])
+                }).ToArray();
+            if (patterns.Length == 0) continue;
+            var combinedPattern = string.Join("|", patterns.Select(x => $"(?:{x})"));
             var encoded = WebUtility.HtmlEncode(value);
             var highlighted = Regex.Replace(encoded, combinedPattern, "<em>$0</em>",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);

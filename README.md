@@ -2,7 +2,7 @@
 
 Полнотекстовый поисковый движок на C# и .NET 10 без сторонних зависимостей.
 
-Текущая версия: **0.2.0**. История изменений находится в [CHANGELOG.md](CHANGELOG.md).
+Текущая версия: **0.3.0**. История изменений находится в [CHANGELOG.md](CHANGELOG.md).
 
 ## Возможности
 
@@ -11,10 +11,12 @@
 - запросы с `AND`, `OR` и `NOT` (`OR` используется по умолчанию);
 - поиск точных фраз: `"полнотекстовый поиск"`;
 - префиксный поиск: `разраб*`;
+- поиск по конкретному полю: `title:поиск`, `body:"поисковый движок"`;
 - ранжирование BM25;
 - фильтрация по полям и пагинация;
 - HTML-безопасная подсветка совпадений;
 - добавление, обновление и удаление документов;
+- пакетная индексация до 1000 документов за запрос;
 - атомарное сохранение JSON-snapshot;
 - потокобезопасное чтение и запись;
 - HTTP API на ASP.NET Core.
@@ -34,7 +36,16 @@ Invoke-RestMethod -Method Put -Uri http://localhost:5000/documents/1 `
 
 Invoke-RestMethod 'http://localhost:5000/search?q=%22полнотекстовый%20поиск%22'
 Invoke-RestMethod 'http://localhost:5000/search?q=движ*%20NOT%20Java'
+Invoke-RestMethod 'http://localhost:5000/search?q=title:%22полнотекстовый%20поиск%22'
 Invoke-RestMethod -Method Post http://localhost:5000/commit
+```
+
+Пакетная индексация:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:5000/documents/bulk `
+  -ContentType application/json `
+  -Body '{"documents":[{"id":"1","fields":{"title":"Первый документ"}},{"id":"2","fields":{"title":"Второй документ"}}]}'
 ```
 
 Путь snapshot можно изменить через конфигурационный параметр `IndexPath`.
